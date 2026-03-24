@@ -1,0 +1,3 @@
+# VidEraser
+
+Initial project setup.
