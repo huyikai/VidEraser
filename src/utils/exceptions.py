@@ -1,0 +1,2 @@
+class VidEraserError(Exception):
+    pass

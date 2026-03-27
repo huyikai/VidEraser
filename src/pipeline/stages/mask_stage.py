@@ -1,0 +1,2 @@
+class MaskStage:
+    name = "mask"

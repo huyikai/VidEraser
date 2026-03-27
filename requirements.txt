@@ -1,0 +1,15 @@
+PySide6
+ffmpeg-python
+opencv-python
+numpy
+Pillow
+torch
+torchvision
+einops
+tqdm
+paddleocr
+pydantic
+PyYAML
+loguru
+orjson
+pyinstaller

@@ -1,0 +1,2 @@
+class DetectStage:
+    name = "detect"
