@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import shutil
-import time
 from pathlib import Path
 
 from PySide6.QtCore import QThread
@@ -57,39 +55,32 @@ class TaskWorker(QThread):
             if self._check_cancel():
                 return
 
-            self.signals.log.emit(task_id, "info", "Running decode stage...")
-            frame_count = self.orchestrator.run_decode_only(
+            output_path = self.task.output_dir / f"{self.task.input_path.stem}_processed.mp4"
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+
+            self.signals.log.emit(task_id, "info", "Running full pipeline...")
+            self.signals.progress.emit(task_id, "decode", 25.0, 0)
+            metrics = self.orchestrator.run_full_pipeline(
                 input_path=self.task.input_path,
                 cache_dir=cache_dir,
+                output_path=output_path,
+                selected_region=self.task.selected_region,
                 fps=2,
             )
-            self.signals.log.emit(
-                task_id,
-                "info",
-                f"Decode finished: {frame_count} frames in {cache_dir / 'frames'}",
-            )
+            self.signals.progress.emit(task_id, "inpaint", 80.0, 0)
+
+            frame_count = int(metrics.get("frames_extracted", 0))
+            self.signals.log.emit(task_id, "info", f"Decode finished: {frame_count} frames")
             preview_frame = next((cache_dir / "frames").glob("frame_*.png"), None)
             if preview_frame:
                 self.signals.preview.emit(task_id, str(preview_frame))
-            for p in (20.0, 45.0, 70.0, 90.0):
-                if self._check_cancel():
-                    return
-                self.signals.progress.emit(task_id, "decode", p, int((100 - p) / 10))
-                time.sleep(0.1)
-
-            output_path = self.task.output_dir / f"{self.task.input_path.stem}_processed.mp4"
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(self.task.input_path, output_path)
 
             self.task.status = TaskStatus.DONE
             self.signals.progress.emit(task_id, "complete", 100.0, 0)
             self.signals.done.emit(
                 task_id,
                 str(output_path),
-                {
-                    "frames_extracted": frame_count,
-                    "streams": len(info.get("streams", [])),
-                },
+                {"streams": len(info.get("streams", [])), **metrics},
             )
         except FFmpegNotFoundError as exc:
             self.task.status = TaskStatus.FAILED

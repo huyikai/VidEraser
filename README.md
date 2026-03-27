@@ -9,6 +9,7 @@
 - 导入视频，读取元信息（分辨率、时长、FPS）。
 - 后台线程执行耗时任务，UI 保持流畅。
 - 最小可用处理链路：probe -> decode -> 输出。
+- 支持手动输入去除区域 `x/y/w/h`，任务会优先使用该区域生成 mask。
 - 预留 AI 抽象接口（Inpaint/Detect），后续可平滑接入模型。
 
 ## 项目结构
@@ -161,6 +162,6 @@ python app.py
 原因：系统找不到 `ffprobe`。  
 解决：安装 FFmpeg，或按上面的环境变量方式指定路径，或在 `third_party/ffmpeg/<平台>/` 放入对应二进制。
 
-### 为什么当前输出文件内容还和输入接近？
+### 为什么去除效果还不够理想？
 
-当前阶段主要验证工程链路（probe/decode/task lifecycle）。后续阶段会接入真实的 mask/inpaint/encode 逻辑。
+当前版本已接入基础 `detect -> mask -> inpaint -> encode` 流程，但 `inpaint` 仍是 OpenCV 轻量兜底实现（非 ProPainter/LaMa 最终效果）。后续会继续接入深度模型以提升复杂场景质量。

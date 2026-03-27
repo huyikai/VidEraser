@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.services.task_service import TaskService
+from src.ui.widgets.region_selector import RegionSelector
 from src.utils.paths import cache_root, output_root
 from src.video.ffmpeg_paths import FFmpegNotFoundError, resolve_ffmpeg, resolve_ffprobe
 from src.video.ffmpeg_probe import FFmpegProbeError, probe_video
@@ -36,6 +37,8 @@ class MainWindow(QMainWindow):
         self.current_worker = None
         self.current_output_path: str | None = None
         self.ffmpeg_ready = False
+        self.video_width = 0
+        self.video_height = 0
         self._build_ui()
         self.run_startup_checks()
 
@@ -68,6 +71,9 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         layout.addWidget(self.progress)
+
+        self.region_selector = RegionSelector(self)
+        layout.addWidget(self.region_selector)
 
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
@@ -123,6 +129,12 @@ class MainWindow(QMainWindow):
             meta = f"视频信息: {width}x{height}, fps={fps}, duration={duration}s"
             self.video_meta_label.setText(meta)
             self._append_log(meta)
+            self.video_width = int(width) if str(width).isdigit() else 0
+            self.video_height = int(height) if str(height).isdigit() else 0
+            if self.video_width > 0 and self.video_height > 0:
+                self.region_selector.set_frame_size(self.video_width, self.video_height)
+                region = self.region_selector.get_region()
+                self._append_log(f"当前手动区域: {region}")
         except FFmpegNotFoundError as exc:
             self.video_meta_label.setText("视频信息: 未安装 FFmpeg（缺少 ffprobe）")
             self._append_log(str(exc))
@@ -140,6 +152,8 @@ class MainWindow(QMainWindow):
             return
 
         task = self.task_service.create_task(self.selected_video)
+        task.selected_region = self.region_selector.get_region()
+        self._append_log(f"[{task.task_id}] 使用手动区域: {task.selected_region}")
         worker = self.task_service.start_task(task)
         self.current_worker = worker
         worker.signals.progress.connect(self.on_progress)
