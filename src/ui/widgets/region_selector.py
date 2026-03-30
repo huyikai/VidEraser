@@ -65,5 +65,15 @@ class RegionSelector(QGroupBox):
             self.h_spin.value(),
         )
 
+    def set_region_silent(self, x: int, y: int, w: int, h: int) -> None:
+        for spin in (self.x_spin, self.y_spin, self.w_spin, self.h_spin):
+            spin.blockSignals(True)
+        self.x_spin.setValue(x)
+        self.y_spin.setValue(y)
+        self.w_spin.setValue(w)
+        self.h_spin.setValue(h)
+        for spin in (self.x_spin, self.y_spin, self.w_spin, self.h_spin):
+            spin.blockSignals(False)
+
     def _emit_changed(self) -> None:
         self.region_changed.emit(self.get_region())

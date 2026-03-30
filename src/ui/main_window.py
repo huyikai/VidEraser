@@ -5,7 +5,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import cv2
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from src.services.task_service import TaskService
 from src.ui.widgets.region_selector import RegionSelector
+from src.ui.widgets.video_preview import VideoPreview
 from src.utils.paths import cache_root, output_root
 from src.video.ffmpeg_paths import FFmpegNotFoundError, resolve_ffmpeg, resolve_ffprobe
 from src.video.ffmpeg_probe import FFmpegProbeError, probe_video
@@ -53,6 +56,10 @@ class MainWindow(QMainWindow):
         self.video_meta_label = QLabel("视频信息: -")
         layout.addWidget(self.video_meta_label)
 
+        self.video_preview = VideoPreview(self)
+        self.video_preview.setMinimumHeight(220)
+        layout.addWidget(self.video_preview)
+
         button_row = QHBoxLayout()
         self.btn_import = QPushButton("导入视频")
         self.btn_start = QPushButton("开始任务")
@@ -83,6 +90,9 @@ class MainWindow(QMainWindow):
         self.btn_start.clicked.connect(self.on_start_task)
         self.btn_cancel.clicked.connect(self.on_cancel_task)
         self.btn_open_output.clicked.connect(self.on_open_output_dir)
+
+        self.region_selector.region_changed.connect(self._on_region_spin_changed)
+        self.video_preview.region_changed.connect(self._on_preview_region_changed)
 
     def _append_log(self, text: str) -> None:
         self.log_box.appendPlainText(text)
@@ -131,10 +141,17 @@ class MainWindow(QMainWindow):
             self._append_log(meta)
             self.video_width = int(width) if str(width).isdigit() else 0
             self.video_height = int(height) if str(height).isdigit() else 0
+            self._load_preview_frame()
+            if self.video_width <= 0 or self.video_height <= 0:
+                nw, nh = self.video_preview.native_size()
+                if nw > 0 and nh > 0:
+                    self.video_width = nw
+                    self.video_height = nh
             if self.video_width > 0 and self.video_height > 0:
                 self.region_selector.set_frame_size(self.video_width, self.video_height)
                 region = self.region_selector.get_region()
-                self._append_log(f"当前手动区域: {region}")
+                self.video_preview.set_region_native(*region)
+                self._append_log(f"当前区域: {region}（可在预览上拖拽框选）")
         except FFmpegNotFoundError as exc:
             self.video_meta_label.setText("视频信息: 未安装 FFmpeg（缺少 ffprobe）")
             self._append_log(str(exc))
@@ -142,6 +159,39 @@ class MainWindow(QMainWindow):
         except FFmpegProbeError as exc:
             self.video_meta_label.setText("视频信息: ffprobe 读取失败")
             self._append_log(f"读取视频信息失败: {exc}")
+
+    def _load_preview_frame(self) -> None:
+        self.video_preview.clear()
+        if not self.selected_video:
+            return
+        cap = cv2.VideoCapture(str(self.selected_video))
+        try:
+            ok, frame = cap.read()
+        finally:
+            cap.release()
+        if not ok or frame is None:
+            self._append_log("预览: 无法读取首帧，请检查视频是否可读")
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        fh, fw = rgb.shape[:2]
+        qimg = QImage(
+            rgb.data,
+            fw,
+            fh,
+            rgb.strides[0],
+            QImage.Format.Format_RGB888,
+        ).copy()
+        nw = self.video_width if self.video_width > 0 else fw
+        nh = self.video_height if self.video_height > 0 else fh
+        self.video_preview.set_preview_image(qimg, nw, nh)
+
+    def _on_region_spin_changed(self, region: tuple[int, int, int, int]) -> None:
+        x, y, w, h = region
+        self.video_preview.set_region_native(x, y, w, h)
+
+    def _on_preview_region_changed(self, x: int, y: int, w: int, h: int) -> None:
+        self.region_selector.set_region_silent(x, y, w, h)
+        self._append_log(f"预览框选区域: ({x}, {y}, {w}, {h})")
 
     def on_start_task(self) -> None:
         if not self.ffmpeg_ready:
@@ -152,8 +202,9 @@ class MainWindow(QMainWindow):
             return
 
         task = self.task_service.create_task(self.selected_video)
-        task.selected_region = self.region_selector.get_region()
-        self._append_log(f"[{task.task_id}] 使用手动区域: {task.selected_region}")
+        task.selected_region = self.video_preview.get_region_native()
+        self.region_selector.set_region_silent(*task.selected_region)
+        self._append_log(f"[{task.task_id}] 使用区域: {task.selected_region}")
         worker = self.task_service.start_task(task)
         self.current_worker = worker
         worker.signals.progress.connect(self.on_progress)
