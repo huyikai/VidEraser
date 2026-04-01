@@ -10,22 +10,33 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFileDialog,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QPlainTextEdit,
     QProgressBar,
+    QRadioButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
+    QPushButton,
 )
 
+from src.core.config.constants import (
+    INPAINT_BACKEND_LAMA,
+    INPAINT_BACKEND_OPENCV,
+    INPAINT_BACKEND_PROPAINTER,
+    OCR_SAMPLE_MAX_FRAMES,
+    PROCESSING_FPS_CAP,
+)
 from src.services.task_service import TaskService
 from src.ui.widgets.region_selector import RegionSelector
 from src.ui.widgets.video_preview import VideoPreview
-from src.utils.paths import cache_root, output_root
+from src.utils.paths import cache_root, output_root, project_root
 from src.video.ffmpeg_paths import FFmpegNotFoundError, resolve_ffmpeg, resolve_ffprobe
 from src.video.ffmpeg_probe import FFmpegProbeError, probe_video
 
@@ -75,12 +86,74 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.btn_open_output)
         layout.addLayout(button_row)
 
+        # 修复模型 + 性能相关参数
+        model_group = QGroupBox("修复与性能")
+        model_layout = QVBoxLayout(model_group)
+
+        inpaint_row = QHBoxLayout()
+        inpaint_row.addWidget(QLabel("修复模型:"))
+        self.inpaint_combo = QComboBox()
+        self.inpaint_combo.addItem("OpenCV（轻量快速）", INPAINT_BACKEND_OPENCV)
+        self.inpaint_combo.addItem("LaMa（推荐，CPU/CUDA）", INPAINT_BACKEND_LAMA)
+        self.inpaint_combo.addItem(
+            "ProPainter（视频补全，需 NVIDIA CUDA）", INPAINT_BACKEND_PROPAINTER
+        )
+        lama_weights = project_root() / "models" / "lama" / "big-lama.pt"
+        self.inpaint_combo.setMinimumWidth(220)
+        self.inpaint_combo.setCurrentIndex(1 if lama_weights.is_file() else 0)
+        inpaint_row.addWidget(self.inpaint_combo, stretch=1)
+        model_layout.addLayout(inpaint_row)
+
+        # 处理 FPS 与 OCR 采样上限
+        fps_row = QHBoxLayout()
+        fps_row.addWidget(QLabel("处理 FPS 上限:"))
+
+        self.spin_processing_fps = QSpinBox()
+        self.spin_processing_fps.setRange(1, 60)
+        self.spin_processing_fps.setValue(int(PROCESSING_FPS_CAP))
+        self.spin_processing_fps.setFixedWidth(80)
+        fps_row.addWidget(self.spin_processing_fps)
+
+        fps_row.addSpacing(12)
+        fps_row.addWidget(QLabel("OCR 采样帧数上限:"))
+        self.spin_ocr_samples = QSpinBox()
+        self.spin_ocr_samples.setRange(1, 64)
+        self.spin_ocr_samples.setValue(int(OCR_SAMPLE_MAX_FRAMES))
+        self.spin_ocr_samples.setFixedWidth(80)
+        fps_row.addWidget(self.spin_ocr_samples)
+        fps_row.addStretch()
+
+        model_layout.addLayout(fps_row)
+        layout.addWidget(model_group)
+
+        # 区域模式：自动 / 手动 + 手动区域输入
+        region_group = QGroupBox("去除区域 / 文本检测")
+        region_layout = QVBoxLayout(region_group)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("区域模式:"))
+        self.radio_mode_auto = QRadioButton("自动检测文字")
+        self.radio_mode_manual = QRadioButton("手动选择区域")
+        self.radio_mode_manual.setChecked(True)
+        mode_row.addWidget(self.radio_mode_auto)
+        mode_row.addWidget(self.radio_mode_manual)
+        mode_row.addStretch()
+        region_layout.addLayout(mode_row)
+
+        self.lbl_auto_region_hint = QLabel(
+            "自动模式：将根据解码后的多帧 OCR 合并文字框作为去除区域，无需填写坐标。"
+        )
+        self.lbl_auto_region_hint.setWordWrap(True)
+        self.lbl_auto_region_hint.setVisible(False)
+        region_layout.addWidget(self.lbl_auto_region_hint)
+
+        self.region_selector = RegionSelector(self)
+        region_layout.addWidget(self.region_selector)
+        layout.addWidget(region_group)
+
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         layout.addWidget(self.progress)
-
-        self.region_selector = RegionSelector(self)
-        layout.addWidget(self.region_selector)
 
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
@@ -93,6 +166,9 @@ class MainWindow(QMainWindow):
 
         self.region_selector.region_changed.connect(self._on_region_spin_changed)
         self.video_preview.region_changed.connect(self._on_preview_region_changed)
+        self.radio_mode_auto.toggled.connect(self._on_region_mode_toggled)
+
+        self._sync_region_mode_ui(log=False)
 
     def _append_log(self, text: str) -> None:
         self.log_box.appendPlainText(text)
@@ -193,6 +269,21 @@ class MainWindow(QMainWindow):
         self.region_selector.set_region_silent(x, y, w, h)
         self._append_log(f"预览框选区域: ({x}, {y}, {w}, {h})")
 
+    def _sync_region_mode_ui(self, *, log: bool) -> None:
+        manual = self.radio_mode_manual.isChecked()
+        self.region_selector.setVisible(manual)
+        self.lbl_auto_region_hint.setVisible(not manual)
+        self.region_selector.setEnabled(manual)
+        self.video_preview.set_interactive(manual)
+        if log:
+            if manual:
+                self._append_log("区域模式: 手动选择去除区域")
+            else:
+                self._append_log("区域模式: 自动检测文字区域（PaddleOCR）")
+
+    def _on_region_mode_toggled(self, _auto_checked: bool) -> None:
+        self._sync_region_mode_ui(log=True)
+
     def on_start_task(self) -> None:
         if not self.ffmpeg_ready:
             QMessageBox.warning(self, "缺少 FFmpeg", "请先安装 FFmpeg 后再开始任务。")
@@ -202,9 +293,19 @@ class MainWindow(QMainWindow):
             return
 
         task = self.task_service.create_task(self.selected_video)
-        task.selected_region = self.video_preview.get_region_native()
-        self.region_selector.set_region_silent(*task.selected_region)
-        self._append_log(f"[{task.task_id}] 使用区域: {task.selected_region}")
+        bd = self.inpaint_combo.currentData()
+        task.inpaint_backend = str(bd) if bd is not None else INPAINT_BACKEND_OPENCV
+        # UI 可调：处理 FPS 上限与 OCR 采样上限
+        task.processing_fps_cap = float(self.spin_processing_fps.value())
+        task.ocr_sample_max_frames = int(self.spin_ocr_samples.value())
+        task.use_auto_detect = self.radio_mode_auto.isChecked()
+        if task.use_auto_detect:
+            task.selected_region = None
+            self._append_log(f"[{task.task_id}] 区域模式: 自动检测文字区域（多帧 OCR）")
+        else:
+            task.selected_region = self.video_preview.get_region_native()
+            self.region_selector.set_region_silent(*task.selected_region)
+            self._append_log(f"[{task.task_id}] 区域模式: 手动选择区域 {task.selected_region}")
         worker = self.task_service.start_task(task)
         self.current_worker = worker
         worker.signals.progress.connect(self.on_progress)

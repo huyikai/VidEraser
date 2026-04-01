@@ -22,6 +22,7 @@ class VideoPreview(QWidget):
         self._drag_current = QPoint()
         self.setMinimumHeight(200)
         self.setMouseTracking(True)
+        self._interactive = True
 
     def clear(self) -> None:
         self._pixmap = None
@@ -56,6 +57,11 @@ class VideoPreview(QWidget):
 
     def get_region_native(self) -> tuple[int, int, int, int]:
         return self._region
+
+    def set_interactive(self, enabled: bool) -> None:
+        self._interactive = enabled
+        self._dragging = False
+        self.update()
 
     def _dest_rect(self) -> QRect:
         if not self._pixmap or self._pixmap.isNull():
@@ -141,6 +147,8 @@ class VideoPreview(QWidget):
             painter.drawRect(rubber)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if not self._interactive:
+            return super().mousePressEvent(event)
         if event.button() != Qt.MouseButton.LeftButton:
             return
         dest = self._dest_rect()
@@ -155,12 +163,16 @@ class VideoPreview(QWidget):
         self.update()
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if not self._interactive:
+            return super().mouseMoveEvent(event)
         if not self._dragging:
             return
         self._drag_current = event.position().toPoint()
         self.update()
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if not self._interactive:
+            return super().mouseReleaseEvent(event)
         if not self._dragging or event.button() != Qt.MouseButton.LeftButton:
             return
         self._dragging = False

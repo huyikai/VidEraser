@@ -13,3 +13,11 @@ PyYAML
 loguru
 orjson
 pyinstaller
+
+# PaddleOCR 推理后端（自动检测文字区域时必需）
+paddlepaddle
+
+# LaMa / ProPainter
+simple-lama-inpainting>=0.1.0
+propainter>=0.0.4
+scipy>=1.10

@@ -14,7 +14,7 @@ class EncodeStage:
         inpainted_frames_dir: Path,
         input_video_path: Path,
         output_path: Path,
-        fps: int = 2,
+        fps: float = 30.0,
     ) -> Path:
         tmp_video = output_path.with_name(f"{output_path.stem}_silent.mp4")
         assemble_video(inpainted_frames_dir, tmp_video, fps=fps)
